@@ -1,0 +1,5 @@
+(library
+ (name https_eio)
+ (public_name https-eio)
+ (wrapped false)
+ (libraries eio eio.unix unix uri tls-eio x509 ca-certs domain-name mirage-crypto-rng.unix))
