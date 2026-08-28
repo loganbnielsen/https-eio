@@ -1,30 +1,11 @@
-(* Unlike this package's four predecessor copies, CA-bundle detection itself
-   (missing bundle, unreadable file, empty trust store) is ca-certs' own
-   responsibility, with its own upstream test suite — not re-tested here.
-   ca-certs has no ~ca_paths override to fail closed against without mutating
-   real process environment variables (SSL_CERT_FILE), which OCaml's Unix
-   module here has no way to cleanly unset afterwards. What's still ours,
-   and still worth a regression test in this repo, is the RNG-seeding and
-   domain-safe-caching behavior layered on top. *)
+(* CA-bundle detection is ca-certs' own tested responsibility, not retested
+   here; this file only regression-tests the RNG-seeding and domain-safe
+   caching layered on top. *)
 
-(* Regression test for a blocker an independent reviewer found in this
-   module's ancestor (aws-eio's Aws_tls): no TLS handshake it ever performed
-   had a seeded Mirage_crypto_rng.default_generator, so every real HTTPS call
-   failed at the point of first use with "The default generator is not yet
-   initialized" — invisible to every other test in this repo family because
-   they all deliberately used plain-HTTP local mock servers, never real TLS.
-
-   This test performs a REAL local TLS handshake (self-signed cert/key in
-   tls_fixtures/, generated once with openssl, not trusted by the system CA
-   bundle) through Https_eio.https_for_uri — the exact function whose cache
-   now seeds the RNG before building the client TLS config. Deliberately does
-   NOT reach the network (no external service dependency, so this stays
-   hermetic and non-flaky) and deliberately expects the handshake to still
-   fail — the self-signed cert isn't trusted — but the failure has to be a
-   certificate/protocol failure, not the RNG error. That distinction is the
-   whole point: RNG seeding happens before key/nonce generation, which
-   happens before certificate verification, so reaching a cert-validation
-   failure is proof the RNG error is gone. *)
+(* Performs a real local TLS handshake (self-signed cert in tls_fixtures/,
+   untrusted by the system CA bundle) so the expected failure is a
+   certificate-validation error rather than the "RNG not yet initialized"
+   error seeding is meant to prevent. *)
 
 let contains_substring ~needle haystack =
   let nlen = String.length needle and hlen = String.length haystack in
@@ -68,15 +49,10 @@ let test_https_handshake_fails_on_cert_not_on_rng () =
         "handshake reached certificate validation, not the unseeded-RNG error" true
         (not (contains_substring ~needle:"not yet initialized" msg)))
 
-(* Regression test for a second blocker found in this module's ancestor: a
-   bare `Stdlib.Lazy.t` is not domain-safe (Lazy.mli documents concurrent
-   Lazy.force from different domains as raising CamlinternalLazy.Undefined
-   for the losing domain, and it was reproduced concretely). Fixed with
-   double-checked locking over an Atomic.t cache (see
-   Https_eio.default_https_wrapper). This exercises that fixed path under
-   real concurrent-domain contention against a cache forced cold immediately
-   beforehand, so it exercises the actual first-use race rather than the
-   lock-free warm-cache fast path. *)
+(* Forces the cache cold, then exercises real concurrent-domain contention
+   on Https_eio.default_https_wrapper's double-checked-locking path (not the
+   lock-free warm-cache fast path) to confirm no domain sees
+   Lazy.Undefined. *)
 let test_concurrent_domains_never_see_lazy_undefined () =
   let domain_count = 8 in
   Atomic.set Https_eio.default_https_wrapper_cache None;

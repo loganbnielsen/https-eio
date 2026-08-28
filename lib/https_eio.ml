@@ -20,29 +20,15 @@ let make_https_wrapper () : (https_wrapper, error) result =
           in
           Tls_eio.client_of_flow ?host tls_config raw)
 
-(* tls-eio's handshake needs Mirage_crypto_rng.default_generator seeded before
-   it generates any key/nonce material — without this, every TLS handshake
-   raises "The default generator is not yet initialized" at the point of
-   first use. Nothing in tls-eio or its opam dependency graph does this.
-   Computed once, tied to whatever builds the TLS wrapper so pure-signing
-   callers that never touch HTTPS don't pay for it. Using the synchronous
-   getentropy-based seed (Mirage_crypto_rng_unix.use_default), not the
-   Eio-native continuously-reseeding mirage-crypto-rng-eio, to avoid requiring
-   env/sw here — getentropy has no accumulator state to go stale (it calls the
-   raw getrandom()/getentropy() syscall on every generate, not once at
-   startup), so a single blocking syscall at first-TLS-use, not per-handshake
-   reseeding, is sufficient indefinitely.
+(* Mirage_crypto_rng must be seeded before the first TLS handshake or it
+   raises "not yet initialized"; nothing in tls-eio's dependency graph does
+   this, so it's seeded lazily here via the synchronous getentropy-based
+   Mirage_crypto_rng_unix.use_default (needs no env/sw, unlike the
+   continuously-reseeding Eio-native RNG).
 
-   NOT a bare `lazy`: Stdlib.Lazy is explicitly documented as unsafe across
-   domains — concurrent Lazy.force from different domains can raise
-   CamlinternalLazy.Undefined, per Lazy.mli, for whichever domain loses the
-   race. Fibers within one domain are fine (nothing here performs an Eio
-   effect, so a fiber runs this to completion without the scheduler switching
-   away), but callers don't get to assume every caller is single-domain.
-   Double-checked locking below: the fast path is a lock-free Atomic.get
-   (correct under OCaml 5's memory model, unlike a plain ref/mutable field,
-   for cross-domain visibility); the mutex is only ever taken on the (at most
-   once per domain-race) slow path. *)
+   Not a bare `lazy`: Stdlib.Lazy.force is documented unsafe across domains
+   (Lazy.mli). Atomic.get gives a lock-free fast path; the mutex is only
+   taken on the cold-cache race. *)
 let default_https_wrapper_cache : (https_wrapper, error) result option Atomic.t = Atomic.make None
 let default_https_wrapper_mutex = Mutex.create ()
 
