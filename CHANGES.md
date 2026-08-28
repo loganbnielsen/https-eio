@@ -1,5 +1,14 @@
 # Changes
 
+## Unreleased
+
+- **API change**: the public `default_https_wrapper_cache` `Atomic.t` — exposed only
+  so tests could force a cold cache, despite its own doc comment already saying it
+  wasn't part of the module's intended API — is replaced by
+  `reset_wrapper_cache_for_testing : unit -> unit`. The cache itself is now private to
+  `lib/https_eio.ml`.
+- Comment pass: verbose/narrative comments tightened repo-wide, no behavior change.
+
 ## 0.1.0
 
 - Initial standalone OPAM package. Extracted from four independent, byte-identical
