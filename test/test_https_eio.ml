@@ -55,7 +55,7 @@ let test_https_handshake_fails_on_cert_not_on_rng () =
    Lazy.Undefined. *)
 let test_concurrent_domains_never_see_lazy_undefined () =
   let domain_count = 8 in
-  Atomic.set Https_eio.default_https_wrapper_cache None;
+  Https_eio.reset_wrapper_cache_for_testing ();
   let ready_count = Atomic.make 0 in
   let go = Atomic.make false in
   let domains =
