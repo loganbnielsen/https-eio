@@ -23,6 +23,6 @@ val https_for_uri : Uri.t -> (https_wrapper option, error) result
 val error_to_string : error -> string
 (** Human-readable error text suitable for logs. *)
 
-val default_https_wrapper_cache : (https_wrapper, error) result option Atomic.t
-(** Exposed only so tests can force a cold cache before exercising the
-    first-use domain race. Not part of the module's intended API. *)
+val reset_wrapper_cache_for_testing : unit -> unit
+(** Force a cold cache so the next {!https_for_uri} call re-runs first-use
+    setup. Test-only: not part of the module's intended API. *)

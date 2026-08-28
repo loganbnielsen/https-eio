@@ -32,6 +32,8 @@ let make_https_wrapper () : (https_wrapper, error) result =
 let default_https_wrapper_cache : (https_wrapper, error) result option Atomic.t = Atomic.make None
 let default_https_wrapper_mutex = Mutex.create ()
 
+let reset_wrapper_cache_for_testing () = Atomic.set default_https_wrapper_cache None
+
 let default_https_wrapper () =
   match Atomic.get default_https_wrapper_cache with
   | Some result -> result
