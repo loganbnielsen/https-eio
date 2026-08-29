@@ -5,21 +5,14 @@ type https_wrapper =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Std.r ->
   Tls_eio.t
 
-let make_https_wrapper () : (https_wrapper, error) result =
+let make_tls_config () =
   Mirage_crypto_rng_unix.use_default ();
   match Ca_certs.authenticator () with
   | Error _ as error -> error
   | Ok authenticator ->
     match Tls.Config.client ~authenticator () with
     | Error _ as error -> error
-    | Ok tls_config ->
-      Ok
-        (fun uri raw ->
-          let host =
-            Uri.host uri
-            |> Option.map (fun h -> Domain_name.(host_exn (of_string_exn h)))
-          in
-          Tls_eio.client_of_flow ?host tls_config raw)
+    | Ok tls_config -> Ok tls_config
 
 let host_of_uri uri =
   match Uri.host uri with
@@ -41,29 +34,31 @@ let host_of_uri uri =
    Not a bare `lazy`: Stdlib.Lazy.force is documented unsafe across domains
    (Lazy.mli). Atomic.get gives a lock-free fast path; the mutex is only
    taken on the cold-cache race. *)
-let default_https_wrapper_cache : (https_wrapper, error) result option Atomic.t = Atomic.make None
-let default_https_wrapper_mutex = Mutex.create ()
+let default_tls_config_cache = Atomic.make None
+let default_tls_config_mutex = Mutex.create ()
 
-let default_https_wrapper () =
-  match Atomic.get default_https_wrapper_cache with
+let default_tls_config () =
+  match Atomic.get default_tls_config_cache with
   | Some result -> result
   | None ->
-    Mutex.lock default_https_wrapper_mutex;
+    Mutex.lock default_tls_config_mutex;
     Fun.protect
-      ~finally:(fun () -> Mutex.unlock default_https_wrapper_mutex)
+      ~finally:(fun () -> Mutex.unlock default_tls_config_mutex)
       (fun () ->
-        match Atomic.get default_https_wrapper_cache with
+        match Atomic.get default_tls_config_cache with
         | Some result -> result (* another domain won the race while we waited for the lock *)
         | None ->
-          let result = make_https_wrapper () in
-          Atomic.set default_https_wrapper_cache (Some result);
+          let result = make_tls_config () in
+          Atomic.set default_tls_config_cache (Some result);
           result)
 
 let https_for_uri uri =
   match Uri.scheme uri with
   | Some scheme when String.lowercase_ascii scheme = "https" ->
-    Result.bind (host_of_uri uri) (fun _ ->
-        Result.map (fun https -> Some https) (default_https_wrapper ()))
+    Result.bind (host_of_uri uri) (fun host ->
+        Result.map
+          (fun tls_config -> Some (fun _uri raw -> Tls_eio.client_of_flow ~host tls_config raw))
+          (default_tls_config ()))
   | _ -> Ok None
 
 let error_to_string (`Msg msg) = "TLS setup error: " ^ msg

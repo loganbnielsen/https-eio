@@ -6,10 +6,11 @@
   so tests could force a cold cache, despite its own doc comment already saying it
   wasn't part of the module's intended API — is now private to `lib/https_eio.ml`.
   No cache-reset test hook is part of the public interface.
-- `make_https_wrapper` now seeds `Mirage_crypto_rng` before returning a TLS wrapper,
-  so the lower-level constructor is safe to use directly.
+- **API change**: `make_https_wrapper` is no longer public. `https_for_uri` is
+  the supported entry point for building Cohttp HTTPS hooks.
 - `https_for_uri` now rejects HTTPS URIs with missing or invalid DNS hosts as
-  `Error _` before returning a TLS wrapper.
+  `Error _` before returning a TLS wrapper, and the wrapper reuses that
+  validated host instead of reparsing with exception-raising domain-name APIs.
 - Comment pass: verbose/narrative comments tightened repo-wide, no behavior change.
 
 ## 0.1.0

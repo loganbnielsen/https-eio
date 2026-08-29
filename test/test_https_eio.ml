@@ -68,10 +68,8 @@ let test_https_handshake_fails_on_cert_not_on_rng () =
         "handshake reached certificate validation, not the unseeded-RNG error" true
         (not (contains_substring ~needle:"not yet initialized" msg)))
 
-(* Forces the cache cold, then exercises real concurrent-domain contention
-   on Https_eio.default_https_wrapper's double-checked-locking path (not the
-   lock-free warm-cache fast path) to confirm no domain sees
-   Lazy.Undefined. *)
+(* Exercises real concurrent-domain contention on the TLS config cache's cold
+   path to confirm no domain sees Lazy.Undefined. *)
 let test_concurrent_domains_never_see_lazy_undefined () =
   let domain_count = 8 in
   let ready_count = Atomic.make 0 in
