@@ -8,6 +8,8 @@
   No cache-reset test hook is part of the public interface.
 - `make_https_wrapper` now seeds `Mirage_crypto_rng` before returning a TLS wrapper,
   so the lower-level constructor is safe to use directly.
+- `https_for_uri` now rejects HTTPS URIs with missing or invalid DNS hosts as
+  `Error _` before returning a TLS wrapper.
 - Comment pass: verbose/narrative comments tightened repo-wide, no behavior change.
 
 ## 0.1.0

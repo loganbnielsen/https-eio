@@ -17,7 +17,9 @@ val make_https_wrapper : unit -> (https_wrapper, error) result
 
 val https_for_uri : Uri.t -> (https_wrapper option, error) result
 (** Return [Some wrapper] for [https://] URIs, [None] otherwise. Caches the
-    built wrapper across calls, domain-safely. *)
+    built wrapper across calls, domain-safely. HTTPS URIs must include a DNS
+    hostname accepted by [domain-name]; invalid hosts return [Error _] before
+    any TLS handshake. *)
 
 val error_to_string : error -> string
 (** Human-readable error text suitable for logs. *)

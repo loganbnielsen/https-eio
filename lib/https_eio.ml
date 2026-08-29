@@ -21,6 +21,17 @@ let make_https_wrapper () : (https_wrapper, error) result =
           in
           Tls_eio.client_of_flow ?host tls_config raw)
 
+let host_of_uri uri =
+  match Uri.host uri with
+  | None | Some "" -> Error (`Msg "HTTPS URI must include a host")
+  | Some host -> (
+    match Domain_name.of_string host with
+    | Error _ -> Error (`Msg ("invalid HTTPS host: " ^ host))
+    | Ok domain -> (
+      match Domain_name.host domain with
+      | Ok host -> Ok host
+      | Error _ -> Error (`Msg ("invalid HTTPS host: " ^ host))))
+
 (* Mirage_crypto_rng must be seeded before the first TLS handshake or it
    raises "not yet initialized"; nothing in tls-eio's dependency graph does
    this, so it's seeded lazily here via the synchronous getentropy-based
@@ -51,7 +62,8 @@ let default_https_wrapper () =
 let https_for_uri uri =
   match Uri.scheme uri with
   | Some scheme when String.lowercase_ascii scheme = "https" ->
-    Result.map (fun https -> Some https) (default_https_wrapper ())
+    Result.bind (host_of_uri uri) (fun _ ->
+        Result.map (fun https -> Some https) (default_https_wrapper ()))
   | _ -> Ok None
 
 let error_to_string (`Msg msg) = "TLS setup error: " ^ msg

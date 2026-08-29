@@ -21,6 +21,25 @@ let read_file path =
 
 let fixtures_dir = "tls_fixtures"
 
+let test_https_for_uri_validates_host () =
+  let assert_some uri =
+    match Https_eio.https_for_uri (Uri.of_string uri) with
+    | Ok (Some _) -> ()
+    | Ok None -> Alcotest.failf "%s: expected Some wrapper" uri
+    | Error e -> Alcotest.failf "%s: %s" uri (Https_eio.error_to_string e)
+  in
+  assert_some "https://localhost";
+  assert_some "https://example.com";
+  Alcotest.(check bool) "http URL has no wrapper" true
+    (Https_eio.https_for_uri (Uri.of_string "http://example.com") = Ok None);
+  List.iter
+    (fun uri ->
+      Alcotest.(check bool) uri true
+        (match Https_eio.https_for_uri (Uri.of_string uri) with
+         | Error _ -> true
+         | Ok _ -> false))
+    [ "https:///path"; "https://127.0.0.1"; "https://-bad.com" ]
+
 let test_https_handshake_fails_on_cert_not_on_rng () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -85,7 +104,9 @@ let test_concurrent_domains_never_see_lazy_undefined () =
 let () =
   Alcotest.run "https_eio"
     [ ( "https handshake",
-        [ Alcotest.test_case "concurrent domains never see Lazy.Undefined" `Quick
+        [ Alcotest.test_case "https_for_uri validates HTTPS hosts" `Quick
+            test_https_for_uri_validates_host;
+          Alcotest.test_case "concurrent domains never see Lazy.Undefined" `Quick
             test_concurrent_domains_never_see_lazy_undefined;
           Alcotest.test_case "fails on certificate trust, not on an unseeded RNG" `Quick
             test_https_handshake_fails_on_cert_not_on_rng;
