@@ -6,6 +6,7 @@ type https_wrapper =
   Tls_eio.t
 
 let make_https_wrapper () : (https_wrapper, error) result =
+  Mirage_crypto_rng_unix.use_default ();
   match Ca_certs.authenticator () with
   | Error _ as error -> error
   | Ok authenticator ->
@@ -32,8 +33,6 @@ let make_https_wrapper () : (https_wrapper, error) result =
 let default_https_wrapper_cache : (https_wrapper, error) result option Atomic.t = Atomic.make None
 let default_https_wrapper_mutex = Mutex.create ()
 
-let reset_wrapper_cache_for_testing () = Atomic.set default_https_wrapper_cache None
-
 let default_https_wrapper () =
   match Atomic.get default_https_wrapper_cache with
   | Some result -> result
@@ -45,7 +44,6 @@ let default_https_wrapper () =
         match Atomic.get default_https_wrapper_cache with
         | Some result -> result (* another domain won the race while we waited for the lock *)
         | None ->
-          Mirage_crypto_rng_unix.use_default ();
           let result = make_https_wrapper () in
           Atomic.set default_https_wrapper_cache (Some result);
           result)

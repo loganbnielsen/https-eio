@@ -4,9 +4,10 @@
 
 - **API change**: the public `default_https_wrapper_cache` `Atomic.t` — exposed only
   so tests could force a cold cache, despite its own doc comment already saying it
-  wasn't part of the module's intended API — is replaced by
-  `reset_wrapper_cache_for_testing : unit -> unit`. The cache itself is now private to
-  `lib/https_eio.ml`.
+  wasn't part of the module's intended API — is now private to `lib/https_eio.ml`.
+  No cache-reset test hook is part of the public interface.
+- `make_https_wrapper` now seeds `Mirage_crypto_rng` before returning a TLS wrapper,
+  so the lower-level constructor is safe to use directly.
 - Comment pass: verbose/narrative comments tightened repo-wide, no behavior change.
 
 ## 0.1.0

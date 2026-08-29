@@ -11,18 +11,13 @@ type https_wrapper =
 
 val make_https_wrapper : unit -> (https_wrapper, error) result
 (** Build a fresh HTTPS wrapper: detect the system CA bundle (via ca-certs) and
-    construct a {!Tls.Config.client}. Does not seed the RNG or cache its
-    result — most callers want {!https_for_uri} instead. *)
+    construct a [Tls.Config.client]. Seeds [Mirage_crypto_rng] before returning
+    a wrapper that may perform a TLS handshake. Does not cache its result — most
+    callers want {!https_for_uri} instead. *)
 
 val https_for_uri : Uri.t -> (https_wrapper option, error) result
-(** Return [Some wrapper] for [https://] URIs, [None] otherwise. Seeds
-    {!Mirage_crypto_rng} on first use (a real TLS handshake cannot generate
-    key/nonce material before that) and caches the built wrapper across
-    calls, domain-safely. *)
+(** Return [Some wrapper] for [https://] URIs, [None] otherwise. Caches the
+    built wrapper across calls, domain-safely. *)
 
 val error_to_string : error -> string
 (** Human-readable error text suitable for logs. *)
-
-val reset_wrapper_cache_for_testing : unit -> unit
-(** Force a cold cache so the next {!https_for_uri} call re-runs first-use
-    setup. Test-only: not part of the module's intended API. *)

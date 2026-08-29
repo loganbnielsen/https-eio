@@ -55,7 +55,6 @@ let test_https_handshake_fails_on_cert_not_on_rng () =
    Lazy.Undefined. *)
 let test_concurrent_domains_never_see_lazy_undefined () =
   let domain_count = 8 in
-  Https_eio.reset_wrapper_cache_for_testing ();
   let ready_count = Atomic.make 0 in
   let go = Atomic.make false in
   let domains =
@@ -86,9 +85,9 @@ let test_concurrent_domains_never_see_lazy_undefined () =
 let () =
   Alcotest.run "https_eio"
     [ ( "https handshake",
-        [ Alcotest.test_case "fails on certificate trust, not on an unseeded RNG" `Quick
-            test_https_handshake_fails_on_cert_not_on_rng;
-          Alcotest.test_case "concurrent domains never see Lazy.Undefined" `Quick
+        [ Alcotest.test_case "concurrent domains never see Lazy.Undefined" `Quick
             test_concurrent_domains_never_see_lazy_undefined;
+          Alcotest.test_case "fails on certificate trust, not on an unseeded RNG" `Quick
+            test_https_handshake_fails_on_cert_not_on_rng;
         ] );
     ]
