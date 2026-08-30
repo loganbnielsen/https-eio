@@ -49,7 +49,9 @@ let default_tls_config () =
         | Some result -> result (* another domain won the race while we waited for the lock *)
         | None ->
           let result = make_tls_config () in
-          Atomic.set default_tls_config_cache (Some result);
+          (match result with
+           | Ok _ -> Atomic.set default_tls_config_cache (Some result)
+           | Error _ -> ());
           result)
 
 let https_for_uri uri =

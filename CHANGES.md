@@ -11,6 +11,8 @@
 - `https_for_uri` now rejects HTTPS URIs with missing or invalid DNS hosts as
   `Error _` before returning a TLS wrapper, and the wrapper reuses that
   validated host instead of reparsing with exception-raising domain-name APIs.
+- TLS setup failures are no longer cached forever; only a successfully built
+  TLS config is memoized.
 - Comment pass: verbose/narrative comments tightened repo-wide, no behavior change.
 
 ## 0.1.0
