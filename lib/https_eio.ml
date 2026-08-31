@@ -64,3 +64,54 @@ let https_for_uri uri =
   | _ -> Ok None
 
 let error_to_string (`Msg msg) = "TLS setup error: " ^ msg
+
+type request_error =
+  | Invalid_config of string
+  | Tls_setup of string
+  | Timeout of float
+  | Network_error of string
+
+let request_error_to_string = function
+  | Invalid_config msg -> msg
+  | Tls_setup msg -> msg
+  | Timeout t -> Printf.sprintf "request timed out after %gs" t
+  | Network_error msg -> msg
+
+let validate_request_url uri =
+  let scheme = Uri.scheme uri |> Option.map String.lowercase_ascii in
+  match scheme with
+  | Some "http" | Some "https" -> (
+    match Uri.host uri with
+    | None -> Error (Invalid_config "url must include a host")
+    | Some _ -> Ok ())
+  | _ -> Error (Invalid_config "url must use http:// or https://")
+
+let request ~net ~clock ?(timeout = 5.0) ~meth ~url ?(headers = []) ?body
+    ?(max_response_bytes = 1_048_576) () =
+  if timeout <= 0. || classify_float timeout = FP_nan then
+    Error (Invalid_config "timeout must be positive")
+  else
+    let uri = Uri.of_string url in
+    match validate_request_url uri with
+    | Error _ as e -> e
+    | Ok () -> (
+      try
+        Eio.Time.with_timeout_exn clock timeout (fun () ->
+          Eio.Switch.run (fun sw ->
+            match https_for_uri uri with
+            | Error e -> Error (Tls_setup (error_to_string e))
+            | Ok https ->
+              let client = Cohttp_eio.Client.make ~https net in
+              let headers = Http.Header.of_list headers in
+              let body = Option.map Cohttp_eio.Body.of_string body in
+              let resp, resp_body = Cohttp_eio.Client.call client ~sw ~headers ?body meth uri in
+              let status = Http.Status.to_int (Http.Response.status resp) in
+              let body_str =
+                Eio.Buf_read.(parse_exn take_all) resp_body ~max_size:max_response_bytes
+              in
+              Ok (status, body_str)))
+      with
+      | Eio.Time.Timeout -> Error (Timeout timeout)
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+      | exn -> Error (Network_error (Printexc.to_string exn)))

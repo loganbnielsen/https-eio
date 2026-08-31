@@ -99,6 +99,79 @@ let test_concurrent_domains_never_see_lazy_undefined () =
       | Error msg -> Alcotest.failf "domain %d: %s" i msg)
     results
 
+(* ------------------------------------------------------------------ *)
+(* request                                                             *)
+(* ------------------------------------------------------------------ *)
+
+let with_mock_server env ~status_code f =
+  Eio.Switch.run @@ fun sw ->
+  let last_method = ref "" in
+  let last_body = ref "" in
+  let stop, stop_r = Eio.Promise.create () in
+  let callback _conn req body =
+    last_method := Http.Method.to_string (Http.Request.meth req);
+    last_body := Eio.Buf_read.(of_flow body ~max_size:(64 * 1024) |> take_all);
+    Cohttp_eio.Server.respond ~status:(Http.Status.of_int status_code)
+      ~body:(Cohttp_eio.Body.of_string "pong") ()
+  in
+  let server = Cohttp_eio.Server.make ~callback () in
+  let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 0) in
+  let socket = Eio.Net.listen ~backlog:1 ~sw env#net addr in
+  let port =
+    match Eio.Net.listening_addr socket with
+    | `Tcp (_, p) -> p
+    | _ -> failwith "unexpected address family"
+  in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+    Cohttp_eio.Server.run ~stop ~on_error:(fun _ -> ()) socket server;
+    `Stop_daemon);
+  let result = f ~port ~last_method ~last_body in
+  Eio.Promise.resolve stop_r ();
+  result
+
+let test_request_get () =
+  Eio_main.run @@ fun env ->
+  with_mock_server env ~status_code:200 (fun ~port ~last_method ~last_body:_ ->
+    let url = Printf.sprintf "http://127.0.0.1:%d/ping" port in
+    match Https_eio.request ~net:env#net ~clock:env#clock ~meth:`GET ~url () with
+    | Ok (200, "pong") -> Alcotest.(check string) "method" "GET" !last_method
+    | Ok (status, body) -> Alcotest.failf "unexpected response: %d %S" status body
+    | Error e -> Alcotest.fail (Https_eio.request_error_to_string e))
+
+let test_request_post_sends_body () =
+  Eio_main.run @@ fun env ->
+  with_mock_server env ~status_code:200 (fun ~port ~last_method ~last_body ->
+    let url = Printf.sprintf "http://127.0.0.1:%d/push" port in
+    match Https_eio.request ~net:env#net ~clock:env#clock ~meth:`POST ~url ~body:"hello" () with
+    | Ok (200, _) ->
+      Alcotest.(check string) "method" "POST" !last_method;
+      Alcotest.(check string) "body received" "hello" !last_body
+    | Ok (status, body) -> Alcotest.failf "unexpected response: %d %S" status body
+    | Error e -> Alcotest.fail (Https_eio.request_error_to_string e))
+
+let test_request_does_not_classify_status () =
+  Eio_main.run @@ fun env ->
+  with_mock_server env ~status_code:500 (fun ~port ~last_method:_ ~last_body:_ ->
+    let url = Printf.sprintf "http://127.0.0.1:%d/boom" port in
+    match Https_eio.request ~net:env#net ~clock:env#clock ~meth:`GET ~url () with
+    | Ok (500, "pong") -> ()
+    | Ok (status, body) -> Alcotest.failf "unexpected response: %d %S" status body
+    | Error e -> Alcotest.failf "expected Ok (500, _), got Error: %s" (Https_eio.request_error_to_string e))
+
+let test_request_rejects_invalid_url () =
+  Eio_main.run @@ fun env ->
+  match Https_eio.request ~net:env#net ~clock:env#clock ~meth:`GET ~url:"ftp://example.com" () with
+  | Ok _ -> Alcotest.fail "expected Invalid_config for a non-http(s) URL"
+  | Error (Https_eio.Invalid_config _) -> ()
+  | Error e -> Alcotest.failf "expected Invalid_config, got: %s" (Https_eio.request_error_to_string e)
+
+let test_request_rejects_invalid_timeout () =
+  Eio_main.run @@ fun env ->
+  match Https_eio.request ~net:env#net ~clock:env#clock ~timeout:0. ~meth:`GET ~url:"http://example.com" () with
+  | Ok _ -> Alcotest.fail "expected Invalid_config for a non-positive timeout"
+  | Error (Https_eio.Invalid_config _) -> ()
+  | Error e -> Alcotest.failf "expected Invalid_config, got: %s" (Https_eio.request_error_to_string e)
+
 let () =
   Alcotest.run "https_eio"
     [ ( "https handshake",
@@ -108,5 +181,14 @@ let () =
             test_concurrent_domains_never_see_lazy_undefined;
           Alcotest.test_case "fails on certificate trust, not on an unseeded RNG" `Quick
             test_https_handshake_fails_on_cert_not_on_rng;
+        ] );
+      ( "request",
+        [ Alcotest.test_case "GET returns status and body" `Quick test_request_get;
+          Alcotest.test_case "POST sends the body" `Quick test_request_post_sends_body;
+          Alcotest.test_case "does not classify non-2xx status" `Quick
+            test_request_does_not_classify_status;
+          Alcotest.test_case "rejects a non-http(s) URL" `Quick test_request_rejects_invalid_url;
+          Alcotest.test_case "rejects a non-positive timeout" `Quick
+            test_request_rejects_invalid_timeout;
         ] );
     ]

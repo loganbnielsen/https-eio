@@ -1,5 +1,5 @@
 (test
  (name test_https_eio)
  (modules test_https_eio)
- (libraries https_eio alcotest eio_main tls-eio x509)
+ (libraries https_eio alcotest eio_main tls-eio x509 cohttp-eio)
  (deps (source_tree tls_fixtures)))
