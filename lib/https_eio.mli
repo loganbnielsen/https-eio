@@ -24,6 +24,11 @@ type request_error =
           URL with a host — rejected before any I/O. *)
   | Tls_setup of string  (** TLS setup failed for an [https://] URL. *)
   | Timeout of float  (** The request did not complete within this many seconds. *)
+  | Response_too_large of int
+      (** The response body exceeded [max_response_bytes] (this case's [int]).
+          A predictable request-policy outcome, not a transport failure —
+          distinct from [Network_error] so a caller that wants to treat "the
+          document is too big" differently from "the connection broke" can. *)
   | Network_error of string
       (** Connection failure, or any other transport-level exception. *)
 

@@ -172,6 +172,16 @@ let test_request_rejects_invalid_timeout () =
   | Error (Https_eio.Invalid_config _) -> ()
   | Error e -> Alcotest.failf "expected Invalid_config, got: %s" (Https_eio.request_error_to_string e)
 
+let test_request_reports_response_too_large () =
+  Eio_main.run @@ fun env ->
+  with_mock_server env ~status_code:200 (fun ~port ~last_method:_ ~last_body:_ ->
+    let url = Printf.sprintf "http://127.0.0.1:%d/big" port in
+    (* The mock server's body ("pong", 4 bytes) exceeds this 1-byte cap. *)
+    match Https_eio.request ~net:env#net ~clock:env#clock ~meth:`GET ~url ~max_response_bytes:1 () with
+    | Ok (status, body) -> Alcotest.failf "expected Response_too_large, got: %d %S" status body
+    | Error (Https_eio.Response_too_large 1) -> ()
+    | Error e -> Alcotest.failf "expected Response_too_large 1, got: %s" (Https_eio.request_error_to_string e))
+
 let () =
   Alcotest.run "https_eio"
     [ ( "https handshake",
@@ -190,5 +200,7 @@ let () =
           Alcotest.test_case "rejects a non-http(s) URL" `Quick test_request_rejects_invalid_url;
           Alcotest.test_case "rejects a non-positive timeout" `Quick
             test_request_rejects_invalid_timeout;
+          Alcotest.test_case "reports Response_too_large distinctly" `Quick
+            test_request_reports_response_too_large;
         ] );
     ]
