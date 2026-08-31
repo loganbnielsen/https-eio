@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.1.1
+
+- New `request`: a timeout-bounded, TLS-wrapped HTTP request helper built on
+  `cohttp-eio`, factored out after `obs-loki-eio`, `obs-prometheus-eio`,
+  `kafka-eio-service`, and `sun-svc`'s JWKS fetch each independently rebuilt the
+  same plumbing on top of this package's own TLS wrapper. Returns `(status, body)`
+  for any response, 2xx or not — it classifies transport failures
+  (`Invalid_config`, `Tls_setup`, `Timeout`, `Network_error`), not HTTP status
+  codes. Not a general-purpose HTTP client: no retries, no connection pooling, no
+  redirect handling. New `cohttp-eio`/`http` dependencies reflect the expanded
+  scope: no longer just the narrow TLS wrapper `cohttp-eio`'s `~https` parameter
+  needs.
+- `request_error` gains `Response_too_large of int`, returned when the response
+  body exceeds `~max_response_bytes`, instead of surfacing as an opaque `Failure`
+  from the underlying `Eio.Buf_read.parse` wrapper.
 - **API change**: the public `default_https_wrapper_cache` `Atomic.t` — exposed only
   so tests could force a cold cache, despite its own doc comment already saying it
   wasn't part of the module's intended API — is now private to `lib/https_eio.ml`.
