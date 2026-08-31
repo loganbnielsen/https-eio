@@ -69,12 +69,15 @@ type request_error =
   | Invalid_config of string
   | Tls_setup of string
   | Timeout of float
+  | Response_too_large of int
   | Network_error of string
 
 let request_error_to_string = function
   | Invalid_config msg -> msg
   | Tls_setup msg -> msg
   | Timeout t -> Printf.sprintf "request timed out after %gs" t
+  | Response_too_large max_bytes ->
+    Printf.sprintf "response exceeded the %d-byte limit" max_bytes
   | Network_error msg -> msg
 
 let validate_request_url uri =
@@ -107,11 +110,13 @@ let request ~net ~clock ?(timeout = 5.0) ~meth ~url ?(headers = []) ?body
               let resp, resp_body = Cohttp_eio.Client.call client ~sw ~headers ?body meth uri in
               let status = Http.Status.to_int (Http.Response.status resp) in
               let body_str =
-                Eio.Buf_read.(parse_exn take_all) resp_body ~max_size:max_response_bytes
+                Eio.Buf_read.of_flow resp_body ~max_size:max_response_bytes
+                |> Eio.Buf_read.take_all
               in
               Ok (status, body_str)))
       with
       | Eio.Time.Timeout -> Error (Timeout timeout)
       | Eio.Cancel.Cancelled _ as exn -> raise exn
       | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+      | Eio.Buf_read.Buffer_limit_exceeded -> Error (Response_too_large max_response_bytes)
       | exn -> Error (Network_error (Printexc.to_string exn)))
