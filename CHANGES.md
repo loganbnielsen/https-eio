@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `https_for_uri` and `request` accept `?ca_file`, a PEM bundle that is the
+  deployment's declared trust root. When supplied, only those certificates anchor
+  the chain (no fallback to the system store) and ordinary chain and hostname
+  verification still run; a missing, empty or unparseable bundle is an `Error`.
+  This is what lets a private-CA deployment trust its own endpoints instead of
+  failing `invalid certificate chain` against the OS store.
+
 ## 0.1.1
 
 - New `request`: a timeout-bounded, TLS-wrapped HTTP request helper built on
