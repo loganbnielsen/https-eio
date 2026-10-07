@@ -14,6 +14,34 @@ let make_tls_config () =
     | Error _ as error -> error
     | Ok tls_config -> Ok tls_config
 
+(* Build a TLS client configuration whose trust anchors are exactly the
+   certificates in the PEM bundle at [path]. This is the deployment's declared
+   trust root: a Sol-managed HTTPS client talking to a Sol-managed endpoint
+   behind a private CA supplies that CA here, and ordinary chain (RFC 5280) and
+   hostname verification still run against it through
+   [Tls_eio.client_of_flow ~host].
+
+   A missing, empty or unparseable bundle is an error; verification is never
+   silently disabled, and there is no fallback to the system store once a
+   declared bundle is supplied. *)
+let tls_config_of_ca_file path =
+  Mirage_crypto_rng_unix.use_default ();
+  match In_channel.with_open_bin path In_channel.input_all with
+  | exception Sys_error msg ->
+    Error (`Msg (Printf.sprintf "cannot read CA bundle %s: %s" path msg))
+  | pem ->
+    (match X509.Certificate.decode_pem_multiple pem with
+     | Error e ->
+       let detail = match e with `Msg m -> m | _ -> "unrecognized error" in
+       Error (`Msg (Printf.sprintf "CA bundle %s is not a PEM bundle: %s" path detail))
+     | Ok [] -> Error (`Msg (Printf.sprintf "CA bundle %s contains no certificate" path))
+     | Ok anchors ->
+       let time () = Some (Ptime_clock.now ()) in
+       let authenticator = X509.Authenticator.chain_of_trust ~time anchors in
+       (match Tls.Config.client ~authenticator () with
+        | Error _ as error -> error
+        | Ok tls_config -> Ok tls_config))
+
 let host_of_uri uri =
   match Uri.host uri with
   | None | Some "" -> Error (`Msg "HTTPS URI must include a host")
@@ -54,13 +82,20 @@ let default_tls_config () =
            | Error _ -> ());
           result)
 
-let https_for_uri uri =
+(* The deployment's declared trust root, when one is supplied, replaces the
+   system store; callers that do not name one keep the system behaviour. *)
+let tls_config ?ca_file () =
+  match ca_file with
+  | None -> default_tls_config ()
+  | Some path -> tls_config_of_ca_file path
+
+let https_for_uri ?ca_file uri =
   match Uri.scheme uri with
   | Some scheme when String.lowercase_ascii scheme = "https" ->
     Result.bind (host_of_uri uri) (fun host ->
         Result.map
           (fun tls_config -> Some (fun _uri raw -> Tls_eio.client_of_flow ~host tls_config raw))
-          (default_tls_config ()))
+          (tls_config ?ca_file ()))
   | _ -> Ok None
 
 let error_to_string (`Msg msg) = "TLS setup error: " ^ msg
@@ -89,8 +124,18 @@ let validate_request_url uri =
     | Some _ -> Ok ())
   | _ -> Error (Invalid_config "url must use http:// or https://")
 
-let request ~net ~clock ?(timeout = 5.0) ~meth ~url ?(headers = []) ?body
-    ?(max_response_bytes = 1_048_576) () =
+let request
+      ~net
+      ~clock
+      ?(timeout = 5.0)
+      ~meth
+      ~url
+      ?(headers = [])
+      ?body
+      ?(max_response_bytes = 1_048_576)
+      ?ca_file
+      ()
+  =
   if timeout <= 0. || classify_float timeout = FP_nan then
     Error (Invalid_config "timeout must be positive")
   else
@@ -100,20 +145,20 @@ let request ~net ~clock ?(timeout = 5.0) ~meth ~url ?(headers = []) ?body
     | Ok () -> (
       try
         Eio.Time.with_timeout_exn clock timeout (fun () ->
-          Eio.Switch.run (fun sw ->
-            match https_for_uri uri with
-            | Error e -> Error (Tls_setup (error_to_string e))
-            | Ok https ->
-              let client = Cohttp_eio.Client.make ~https net in
-              let headers = Http.Header.of_list headers in
-              let body = Option.map Cohttp_eio.Body.of_string body in
-              let resp, resp_body = Cohttp_eio.Client.call client ~sw ~headers ?body meth uri in
-              let status = Http.Status.to_int (Http.Response.status resp) in
-              let body_str =
-                Eio.Buf_read.of_flow resp_body ~max_size:max_response_bytes
-                |> Eio.Buf_read.take_all
-              in
-              Ok (status, body_str)))
+            Eio.Switch.run (fun sw ->
+                match https_for_uri ?ca_file uri with
+                | Error e -> Error (Tls_setup (error_to_string e))
+                | Ok https ->
+                  let client = Cohttp_eio.Client.make ~https net in
+                  let headers = Http.Header.of_list headers in
+                  let body = Option.map Cohttp_eio.Body.of_string body in
+                  let resp, resp_body = Cohttp_eio.Client.call client ~sw ~headers ?body meth uri in
+                  let status = Http.Status.to_int (Http.Response.status resp) in
+                  let body_str =
+                    Eio.Buf_read.of_flow resp_body ~max_size:max_response_bytes
+                    |> Eio.Buf_read.take_all
+                  in
+                  Ok (status, body_str)))
       with
       | Eio.Time.Timeout -> Error (Timeout timeout)
       | Eio.Cancel.Cancelled _ as exn -> raise exn

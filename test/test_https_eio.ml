@@ -99,6 +99,82 @@ let test_concurrent_domains_never_see_lazy_undefined () =
       | Error msg -> Alcotest.failf "domain %d: %s" i msg)
     results
 
+(* A TLS listener presenting the untrusted self-signed fixture. A caller that
+   supplies the fixture as its declared CA must complete the handshake; without
+   it, certificate verification must still fail. *)
+let with_self_signed_server env f =
+  Eio.Switch.run @@ fun sw ->
+  let cert =
+    Result.get_ok
+      (X509.Certificate.decode_pem (read_file (Filename.concat fixtures_dir "cert.pem")))
+  in
+  let key =
+    Result.get_ok
+      (X509.Private_key.decode_pem (read_file (Filename.concat fixtures_dir "key.pem")))
+  in
+  let server_config = Result.get_ok (Tls.Config.server ~certificates:(`Single ([ cert ], key)) ()) in
+  let socket = Eio.Net.listen ~backlog:2 ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0)) in
+  let port =
+    match Eio.Net.listening_addr socket with
+    | `Tcp (_, port) -> port
+    | _ -> failwith "unexpected address family"
+  in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+      Eio.Net.accept_fork ~sw socket ~on_error:(fun _ -> ()) (fun conn _addr ->
+          try ignore (Tls_eio.server_of_flow server_config conn) with _ -> ());
+      `Stop_daemon);
+  f ~sw ~port
+;;
+
+let connect_raw ~sw env port =
+  let socket = Eio.Net.connect ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port)) in
+  (socket :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Std.r)
+;;
+
+let declared_ca_bundle = Filename.concat fixtures_dir "cert.pem"
+
+let test_https_for_uri_trusts_declared_ca () =
+  Eio_main.run @@ fun env ->
+  with_self_signed_server env (fun ~sw ~port ->
+      let uri = Uri.make ~scheme:"https" ~host:"localhost" () in
+      match Https_eio.https_for_uri ~ca_file:declared_ca_bundle uri with
+      | Error e -> Alcotest.failf "declared CA bundle: %s" (Https_eio.error_to_string e)
+      | Ok None -> Alcotest.fail "expected Some wrapper for an https:// uri"
+      | Ok (Some wrap) -> (
+        let raw = connect_raw ~sw env port in
+        match wrap uri raw with
+        | (_ : Tls_eio.t) -> ()
+        | exception exn ->
+          Alcotest.failf
+            "the declared CA should have been trusted; got: %s"
+            (Printexc.to_string exn)))
+;;
+
+let test_https_for_uri_still_verifies_hostname_against_declared_ca () =
+  Eio_main.run @@ fun env ->
+  with_self_signed_server env (fun ~sw ~port ->
+      let uri = Uri.make ~scheme:"https" ~host:"wrong.invalid" () in
+      match Https_eio.https_for_uri ~ca_file:declared_ca_bundle uri with
+      | Error e -> Alcotest.failf "declared CA bundle: %s" (Https_eio.error_to_string e)
+      | Ok None -> Alcotest.fail "expected Some wrapper for an https:// uri"
+      | Ok (Some wrap) -> (
+        let raw = connect_raw ~sw env port in
+        match wrap uri raw with
+        | (_ : Tls_eio.t) ->
+          Alcotest.fail "a host absent from the server certificate must be rejected"
+        | exception _ -> ()))
+;;
+
+let test_https_for_uri_rejects_unusable_declared_ca () =
+  let uri = Uri.make ~scheme:"https" ~host:"localhost" () in
+  let assert_error path =
+    match Https_eio.https_for_uri ~ca_file:path uri with
+    | Error _ -> ()
+    | Ok _ -> Alcotest.failf "a declared CA bundle %s must be rejected, not ignored" path
+  in
+  assert_error (Filename.concat fixtures_dir "does-not-exist.pem")
+;;
+
 (* ------------------------------------------------------------------ *)
 (* request                                                             *)
 (* ------------------------------------------------------------------ *)
@@ -191,6 +267,12 @@ let () =
             test_concurrent_domains_never_see_lazy_undefined;
           Alcotest.test_case "fails on certificate trust, not on an unseeded RNG" `Quick
             test_https_handshake_fails_on_cert_not_on_rng;
+          Alcotest.test_case "trusts a supplied declared CA bundle" `Quick
+            test_https_for_uri_trusts_declared_ca;
+          Alcotest.test_case "still verifies hostname against the declared CA" `Quick
+            test_https_for_uri_still_verifies_hostname_against_declared_ca;
+          Alcotest.test_case "rejects an unusable declared CA bundle" `Quick
+            test_https_for_uri_rejects_unusable_declared_ca;
         ] );
       ( "request",
         [ Alcotest.test_case "GET returns status and body" `Quick test_request_get;

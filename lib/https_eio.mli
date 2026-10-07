@@ -9,11 +9,17 @@ type https_wrapper =
   Tls_eio.t
 (** The exact shape cohttp-eio's client expects for its [~https] hook. *)
 
-val https_for_uri : Uri.t -> (https_wrapper option, error) result
+val https_for_uri : ?ca_file:string -> Uri.t -> (https_wrapper option, error) result
 (** Return [Some wrapper] for [https://] URIs, [None] otherwise. HTTPS URIs
     must include a DNS hostname accepted by [domain-name]; invalid hosts return
     [Error _] before any TLS handshake. The returned wrapper captures the
-    validated host for SNI/certificate verification. *)
+    validated host for SNI/certificate verification.
+
+    [?ca_file] names a PEM certificate bundle that is the deployment's declared
+    trust root. When it is supplied, only those certificates anchor the chain
+    and a missing, empty or unparseable bundle is an [Error] — certificate and
+    hostname verification still run, and the system store is not consulted.
+    When it is omitted, the system CA store is used as before. *)
 
 val error_to_string : error -> string
 (** Human-readable error text suitable for logs. *)
@@ -45,6 +51,9 @@ val request
   -> ?max_response_bytes:int
       (** Response body is read up to this many bytes, then the connection is
           closed even if more data remains. Default: [1_048_576] (1 MiB). *)
+  -> ?ca_file:string
+      (** PEM bundle that is the deployment's declared trust root (see
+          {!https_for_uri}). Omitted means the system CA store. *)
   -> unit
   -> (int * string, request_error) result
 (** A timeout-bounded HTTP request through [https_for_uri]'s TLS wrapper, on
